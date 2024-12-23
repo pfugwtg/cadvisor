@@ -102,8 +102,7 @@ func RegisterPrometheusHandler(mux httpmux.Mux, resourceManager manager.Manager,
 	processCollector := collectors.NewProcessCollector(collectors.ProcessCollectorOpts{})
 	machineCollector := metrics.NewPrometheusMachineCollector(resourceManager, includedMetrics)
 
-	promHandler := func(w http.ResponseWriter, authReq *auth.AuthenticatedRequest) {
-		req := &authReq.Request
+	promHandler := func(w http.ResponseWriter, req *http.Request) {
 		opts, err := api.GetRequestOptions(req)
 		if err != nil {
 			http.Error(w, "No metrics gathered, last error:\n\n"+err.Error(), http.StatusInternalServerError)
@@ -126,7 +125,11 @@ func RegisterPrometheusHandler(mux httpmux.Mux, resourceManager manager.Manager,
 		klog.V(1).Infof("Prometheus - Using auth file %s", httpAuthFile)
 		secrets := auth.HtpasswdFileProvider(httpAuthFile)
 		authenticator := auth.NewBasicAuthenticator(httpAuthRealm, secrets)
-		mux.Handle(prometheusEndpoint, authenticator.Wrap(promHandler))
+		mux.Handle(prometheusEndpoint, authenticator.Wrap(func(w http.ResponseWriter, authReq *auth.AuthenticatedRequest) {
+			promHandler(w, &authReq.Request)
+		}))
+	} else {
+		mux.Handle(prometheusEndpoint, http.HandlerFunc(promHandler))
 	}
 }
 
