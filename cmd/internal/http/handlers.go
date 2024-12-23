@@ -96,13 +96,14 @@ func RegisterHandlers(mux httpmux.Mux, containerManager manager.Manager, httpAut
 
 // RegisterPrometheusHandler creates a new PrometheusCollector and configures
 // the provided HTTP mux to handle the given Prometheus endpoint.
-func RegisterPrometheusHandler(mux httpmux.Mux, resourceManager manager.Manager, prometheusEndpoint string,
+func RegisterPrometheusHandler(mux httpmux.Mux, resourceManager manager.Manager, httpAuthFile, httpAuthRealm, prometheusEndpoint string,
 	f metrics.ContainerLabelsFunc, includedMetrics container.MetricSet) {
 	goCollector := collectors.NewGoCollector()
 	processCollector := collectors.NewProcessCollector(collectors.ProcessCollectorOpts{})
 	machineCollector := metrics.NewPrometheusMachineCollector(resourceManager, includedMetrics)
 
-	mux.Handle(prometheusEndpoint, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	promHandler := func(w http.ResponseWriter, authReq *auth.AuthenticatedRequest) {
+		req := &authReq.Request
 		opts, err := api.GetRequestOptions(req)
 		if err != nil {
 			http.Error(w, "No metrics gathered, last error:\n\n"+err.Error(), http.StatusInternalServerError)
@@ -119,7 +120,14 @@ func RegisterPrometheusHandler(mux httpmux.Mux, resourceManager manager.Manager,
 			processCollector,
 		)
 		promhttp.HandlerFor(r, promhttp.HandlerOpts{ErrorHandling: promhttp.ContinueOnError}).ServeHTTP(w, req)
-	}))
+	};
+
+	if httpAuthFile != "" {
+		klog.V(1).Infof("Prometheus - Using auth file %s", httpAuthFile)
+		secrets := auth.HtpasswdFileProvider(httpAuthFile)
+		authenticator := auth.NewBasicAuthenticator(httpAuthRealm, secrets)
+		mux.Handle(prometheusEndpoint, authenticator.Wrap(promHandler))
+	}
 }
 
 func staticHandlerNoAuth(w http.ResponseWriter, r *http.Request) {
